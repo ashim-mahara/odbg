@@ -9,8 +9,8 @@ from openai import OpenAI
 from typing import List, Dict, Optional, Union
 
 class BatchProcessor:
-    def __init__(self, api_key: str, db_name: str = 'jobs.db'):
-        self.client = OpenAI(api_key=api_key)
+    def __init__(self, api_key: str, base_url: str, db_name: str = 'jobs.db'):
+        self.client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)  ## for openai compatible proxies like ollama
         self.db_name = db_name
         self.init_db()
 
@@ -166,6 +166,7 @@ class BatchProcessor:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Batch job processing script")
+    parser.add_argument('--base_url', type=str, default=None, help='Base URL for OpenAI Compatabile Servers and proxies, example: https://localuser:localpassword@localhost:9090 or https://localhost:8080')
     parser.add_argument('--system_prompt', type=str, help='System prompt as a string')
     parser.add_argument('--system_prompt_file', type=str, help='Path to the system prompt file')
     parser.add_argument('--input_file', type=str, required=True, help='Path to the input CSV or Parquet file')
@@ -177,5 +178,5 @@ if __name__ == "__main__":
     parser.add_argument('--description', type=str, required=False, default="Playing with ODB!",  help='Description for the task run')
 
     args = parser.parse_args()
-    processor = BatchProcessor(api_key=os.getenv("OPENAI_KEY")) # type: ignore
+    processor = BatchProcessor(api_key=os.getenv("OPENAI_KEY"), base_url=args.base_url) # type: ignore
     processor.run(args.system_prompt, args.system_prompt_file, args.input_file, args.data_path, args.text_field, args.task_name, args.model, args.id_field, args.description)
