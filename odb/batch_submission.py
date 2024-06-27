@@ -61,14 +61,14 @@ class BatchProcessor:
                 f.write(json.dumps(prompt) + "\n")
         return input_file_path
 
-    def submit_batch_job(self, input_file_path: str) -> Dict:
+    def submit_batch_job(self, input_file_path: str, description: str) -> Dict:
         file_response = self.client.files.create(file=open(input_file_path, "rb"), purpose="batch")
         file_id = file_response.id
         batch_response = self.client.batches.create(
             input_file_id=file_id,
             completion_window="24h",
             endpoint="/v1/chat/completions",
-            metadata={"description": "developing batching script"},
+            metadata={"description": description},
         )
         return batch_response
 
@@ -93,7 +93,7 @@ class BatchProcessor:
             if request_count + 1 > max_requests_per_batch or batch_size + text_size > max_batch_size_mb:
                 df_chunk = df.iloc[start_idx:idx]
                 input_file_path = self.create_batch_file(df_chunk, system_prompt, len(batch_info), task_name, task_run_id, text_field, model, id_field)
-                batch_response = self.submit_batch_job(input_file_path)
+                batch_response = self.submit_batch_job(input_file_path, description)
                 batch_info.append({
                     "batch_id": batch_response.id,
                     "input_file": input_file_path,
@@ -110,7 +110,7 @@ class BatchProcessor:
         if request_count > 0:
             df_chunk = df.iloc[start_idx:]
             input_file_path = self.create_batch_file(df_chunk, system_prompt, len(batch_info), task_name, task_run_id, text_field, model, id_field)
-            batch_response = self.submit_batch_job(input_file_path)
+            batch_response = self.submit_batch_job(input_file_path, description)
             batch_info.append({
                 "batch_id": batch_response.id,
                 "input_file": input_file_path,
@@ -165,7 +165,7 @@ if __name__ == "__main__":
     parser.add_argument('--task_name', type=str, required=True, help='Task name to prefix batch files and output')
     parser.add_argument('--model', type=str, required=True, help='Model to use for OpenAI API')
     parser.add_argument('--id_field', type=str, required=True, help='Name of the ID field in the dataframe')
-    parser.add_argument('--description', type=str, required=True, help='Description for the task run')
+    parser.add_argument('--description', type=str, required=False, default="Playing with ODB!",  help='Description for the task run')
 
     args = parser.parse_args()
     processor = BatchProcessor(api_key=os.getenv("OPENAI_KEY"))
