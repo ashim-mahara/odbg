@@ -185,7 +185,7 @@ class BatchProcessor:
         batch_info_df.to_csv(os.path.join(output_dir, "batch_info.csv"), index=False)
         logging.info("Batch information saved.")
 
-    def run(self, system_prompt: Optional[Union[str, None]], system_prompt_file: Optional[str], input_file: str, data_path: str, text_field: str, task_name: str, model: str, id_field: Optional[str], description: str, random_samples: Optional[int], dry_run: bool, verbose: bool) -> None:
+    def run(self, system_prompt: Optional[Union[str, None]], system_prompt_file: Optional[str], input_file: str, data_path: str, text_field: str, task_name: str, model: str, id_field: Optional[str], description: str, random_samples: Optional[int], dry_run: bool, verbose: bool) -> Union[Dict, None]:
         logging.info("Starting the batch processing script.")
 
         task_run_id = self.get_next_task_run_id(task_name)
@@ -211,7 +211,7 @@ class BatchProcessor:
 
         if verbose:
             table = [[info["batch_index"], info["start_idx"], info["end_idx"], info["num_requests"], info["batch_size_mb"], info["batch_tokens"]] for info in batch_info]
-            print(tabulate(table, headers=["Batch Index", "Start Index", "End Index", "Num Requests", "Batch Size (MB)", "Batch Tokens"]))
+            print(tabulate(tabular_data=table, headers=["Batch Index", "Start Index", "End Index", "Num Requests", "Batch Size (MB)", "Batch Tokens"]))
 
         total_requests = sum(info["num_requests"] for info in batch_info)
         total_batch_size = sum(info["batch_size_mb"] for info in batch_info)
@@ -229,6 +229,11 @@ class BatchProcessor:
 
         if not dry_run:
             self.process_batches(df, system_prompt_content, data_path, task_name, task_run_id, text_field, model, id_field, description)
+
+            logging.info(f"To check the status and download results, run the following command:")
+            logging.info(f"python -m odb.download_results.py --task_name {task_name} --task_run_id {task_run_id}")
+
+            return {"task_name": task_name, "task_run_id": task_run_id}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Batch job processing script")
