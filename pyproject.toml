@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "odb"
+version = "0.1.0"
+description = "Openai batch DataBase manager"
+authors = ["Ashim Mahara <am7539@g.rit.edu>"]
+readme = "README.md"
+package-mode = true
+
+[tool.poetry.dependencies]
+python = "^3.12"
+pandas = "^2.2.2"
+tqdm = "^4.66.4"
+openai = "^1.35.6"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
