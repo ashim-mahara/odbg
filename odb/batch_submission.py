@@ -39,9 +39,10 @@ class BatchProcessor:
                 return file.read()
         return None
 
-    def create_batch_file(self, df_chunk: pd.DataFrame, system_prompt: Optional[str], batch_index: int, task_name: str, task_run_id: int, text_field: str, model: str, id_field: str) -> str:
-        input_file_path = f"data/openai_jobs/{task_name}/{task_run_id}/batch_{batch_index}.jsonl"
+    def create_batch_file(self, df_chunk: pd.DataFrame, data_path: str, system_prompt: Optional[str], batch_index: int, task_name: str, task_run_id: int, text_field: str, model: str, id_field: str) -> str:
+        input_file_path = os.path.join(data_path, f"{task_name}/{task_run_id}/batch_{batch_index}.jsonl")
         os.makedirs(os.path.dirname(input_file_path), exist_ok=True)
+        logging.info(f"Created directory for batch files: {os.path.dirname(input_file_path)}")
         with open(input_file_path, "w") as f:
             for _, row in df_chunk.iterrows():
                 user_prompt = row[text_field]
@@ -80,7 +81,7 @@ class BatchProcessor:
         conn.close()
         return (max_run_id or 0) + 1
 
-    def process_batches(self, df: pd.DataFrame, system_prompt: Optional[str], task_name: str, task_run_id: int, text_field: str, model: str, id_field: str, description: str) -> None:
+    def process_batches(self, df: pd.DataFrame, system_prompt: Optional[str], data_path: str, task_name: str, task_run_id: int, text_field: str, model: str, id_field: str, description: str) -> None:
         batch_info = []
         max_requests_per_batch = 50000
         max_batch_size_mb = 100 * 1024 * 1024
@@ -92,7 +93,7 @@ class BatchProcessor:
             text_size = len(row[text_field].encode('utf-8'))
             if request_count + 1 > max_requests_per_batch or batch_size + text_size > max_batch_size_mb:
                 df_chunk = df.iloc[start_idx:idx]
-                input_file_path = self.create_batch_file(df_chunk, system_prompt, len(batch_info), task_name, task_run_id, text_field, model, id_field)
+                input_file_path = self.create_batch_file(df_chunk, data_path, system_prompt, len(batch_info), task_name, task_run_id, text_field, model, id_field)
                 batch_response = self.submit_batch_job(input_file_path, description)
                 batch_info.append({
                     "batch_id": batch_response.id,
@@ -107,10 +108,15 @@ class BatchProcessor:
             batch_size += text_size
             request_count += 1
 
+        # Check if there are any remaining requests that were not processed into a complete batch
         if request_count > 0:
+            # Create a DataFrame chunk for the remaining rows
             df_chunk = df.iloc[start_idx:]
-            input_file_path = self.create_batch_file(df_chunk, system_prompt, len(batch_info), task_name, task_run_id, text_field, model, id_field)
+            # Create the batch file for the remaining data
+            input_file_path = self.create_batch_file(df_chunk, data_path, system_prompt, len(batch_info), task_name, task_run_id, text_field, model, id_field)
+            # Submit the batch job to the OpenAI API
             batch_response = self.submit_batch_job(input_file_path, description)
+            # Append the batch response details to the batch_info list
             batch_info.append({
                 "batch_id": batch_response.id,
                 "input_file": input_file_path,
@@ -118,7 +124,7 @@ class BatchProcessor:
             })
             self.save_job_details(task_name, task_run_id, 'submitted', batch_response.id, input_file_path, description)
 
-        self.save_batch_info(task_name, task_run_id, batch_info)
+        self.save_batch_info(data_path, task_name, task_run_id, batch_info)
         logging.info("Done with submitting batches.")
 
     def save_job_details(self, task_name: str, task_run_id: int, status: str, job_id: str, file_path: str, description: str) -> None:
@@ -131,13 +137,15 @@ class BatchProcessor:
         conn.commit()
         conn.close()
 
-    def save_batch_info(self, task_name: str, task_run_id: int, batch_info: List[Dict]) -> None:
+    def save_batch_info(self, data_path: str, task_name: str, task_run_id: int, batch_info: List[Dict]) -> None:
         batch_info_df = pd.DataFrame(batch_info)
-        os.makedirs(f"data/openai_jobs/{task_name}/{task_run_id}", exist_ok=True)
-        batch_info_df.to_csv(f"data/openai_jobs/{task_name}/{task_run_id}/batch_info.csv", index=False)
+        output_dir = os.path.join(data_path, f"{task_name}/{task_run_id}")
+        os.makedirs(output_dir, exist_ok=True)
+        logging.info(f"Created directory for batch info: {output_dir}")
+        batch_info_df.to_csv(os.path.join(output_dir, "batch_info.csv"), index=False)
         logging.info("Batch information saved.")
 
-    def run(self, system_prompt: Optional[Union[str, None]], system_prompt_file: Optional[str], input_file: str, text_field: str, task_name: str, model: str, id_field: str, description: str) -> None:
+    def run(self, system_prompt: Optional[Union[str, None]], system_prompt_file: Optional[str], input_file: str, data_path: str, text_field: str, task_name: str, model: str, id_field: str, description: str) -> None:
         logging.info("Starting the batch processing script.")
 
         task_run_id = self.get_next_task_run_id(task_name)
@@ -154,13 +162,14 @@ class BatchProcessor:
             return
 
         df = df.sample(100)
-        self.process_batches(df, system_prompt_content, task_name, task_run_id, text_field, model, id_field, description)
+        self.process_batches(df, system_prompt_content, data_path, task_name, task_run_id, text_field, model, id_field, description)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Batch job processing script")
     parser.add_argument('--system_prompt', type=str, help='System prompt as a string')
     parser.add_argument('--system_prompt_file', type=str, help='Path to the system prompt file')
     parser.add_argument('--input_file', type=str, required=True, help='Path to the input CSV or Parquet file')
+    parser.add_argument('--data_path', type=str, required=True, help="Path to save data")
     parser.add_argument('--text_field', type=str, required=True, help='Name of the text field in the dataframe')
     parser.add_argument('--task_name', type=str, required=True, help='Task name to prefix batch files and output')
     parser.add_argument('--model', type=str, required=True, help='Model to use for OpenAI API')
@@ -168,5 +177,5 @@ if __name__ == "__main__":
     parser.add_argument('--description', type=str, required=False, default="Playing with ODB!",  help='Description for the task run')
 
     args = parser.parse_args()
-    processor = BatchProcessor(api_key=os.getenv("OPENAI_KEY"))
-    processor.run(args.system_prompt, args.system_prompt_file, args.input_file, args.text_field, args.task_name, args.model, args.id_field, args.description)
+    processor = BatchProcessor(api_key=os.getenv("OPENAI_KEY")) # type: ignore
+    processor.run(args.system_prompt, args.system_prompt_file, args.input_file, args.data_path, args.text_field, args.task_name, args.model, args.id_field, args.description)
