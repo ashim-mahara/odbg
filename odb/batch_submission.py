@@ -7,11 +7,15 @@ import json
 from tqdm import tqdm
 from openai import OpenAI
 from typing import List, Dict, Optional, Union
+import tiktoken
+from tabulate import tabulate
 
 class BatchProcessor:
-    def __init__(self, api_key: str, base_url: str, db_name: str = 'jobs.db'):
-        self.client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)  ## for openai compatible proxies like ollama
+    def __init__(self, api_key: str, base_url: str, max_batch_size_mb: int = 100, max_requests_per_batch: int = 50000, db_name: str = 'jobs.db'):
+        self.client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
         self.db_name = db_name
+        self.max_batch_size_mb = max_batch_size_mb * 1024 * 1024  # Convert to bytes
+        self.max_requests_per_batch = max_requests_per_batch
         self.init_db()
 
     def init_db(self) -> None:
@@ -39,14 +43,14 @@ class BatchProcessor:
                 return file.read()
         return None
 
-    def create_batch_file(self, df_chunk: pd.DataFrame, data_path: str, system_prompt: Optional[str], batch_index: int, task_name: str, task_run_id: int, text_field: str, model: str, id_field: str) -> str:
+    def create_batch_file(self, df_chunk: pd.DataFrame, data_path: str, system_prompt: Optional[str], batch_index: int, task_name: str, task_run_id: int, text_field: str, model: str, id_field: Optional[str]) -> str:
         input_file_path = os.path.join(data_path, f"{task_name}/{task_run_id}/batch_{batch_index}.jsonl")
         os.makedirs(os.path.dirname(input_file_path), exist_ok=True)
         logging.info(f"Created directory for batch files: {os.path.dirname(input_file_path)}")
         with open(input_file_path, "w") as f:
-            for _, row in df_chunk.iterrows():
+            for idx, row in df_chunk.iterrows():
                 user_prompt = row[text_field]
-                custom_id = f"{task_name}_{task_run_id}_{row[id_field]}"
+                custom_id = row[id_field] if id_field else row['index_col']
                 messages = [{"role": "user", "content": user_prompt}]
                 if system_prompt:
                     messages.insert(0, {"role": "system", "content": system_prompt})
@@ -81,17 +85,58 @@ class BatchProcessor:
         conn.close()
         return (max_run_id or 0) + 1
 
-    def process_batches(self, df: pd.DataFrame, system_prompt: Optional[str], data_path: str, task_name: str, task_run_id: int, text_field: str, model: str, id_field: str, description: str) -> None:
+    def estimate_batches(self, df: pd.DataFrame, system_prompt: Optional[str], text_field: str, model: str) -> List[Dict]:
+        enc = tiktoken.encoding_for_model(model)
+        batch_size = 0
+        request_count = 0
+        start_idx = 0
         batch_info = []
-        max_requests_per_batch = 50000
-        max_batch_size_mb = 100 * 1024 * 1024
+
+        total_tokens = 0
+        batch_tokens = 0
+        for idx, row in tqdm(df.iterrows(), total=len(df), desc="Estimating Batches"):
+            text_tokens = len(enc.encode(row[text_field]))
+            total_tokens += text_tokens
+            batch_tokens += text_tokens
+            text_size = len(row[text_field].encode('utf-8'))
+            if request_count + 1 > self.max_requests_per_batch or batch_size + text_size > self.max_batch_size_mb:
+                batch_info.append({
+                    "batch_index": len(batch_info),
+                    "start_idx": start_idx,
+                    "end_idx": idx,
+                    "num_requests": request_count,
+                    "batch_size_mb": batch_size / (1024 * 1024),
+                    "batch_tokens": batch_tokens
+                })
+                batch_size = 0
+                request_count = 0
+                batch_tokens = 0
+                start_idx = idx
+
+            batch_size += text_size
+            request_count += 1
+
+        if request_count > 0:
+            batch_info.append({
+                "batch_index": len(batch_info),
+                "start_idx": start_idx,
+                "end_idx": len(df),
+                "num_requests": request_count,
+                "batch_size_mb": batch_size / (1024 * 1024),
+                "batch_tokens": batch_tokens
+            })
+
+        return total_tokens, batch_info
+
+    def process_batches(self, df: pd.DataFrame, system_prompt: Optional[str], data_path: str, task_name: str, task_run_id: int, text_field: str, model: str, id_field: Optional[str], description: str) -> None:
+        batch_info = []
         batch_size = 0
         request_count = 0
         start_idx = 0
 
         for idx, row in tqdm(df.iterrows(), total=len(df), desc="Processing Batches"):
             text_size = len(row[text_field].encode('utf-8'))
-            if request_count + 1 > max_requests_per_batch or batch_size + text_size > max_batch_size_mb:
+            if request_count + 1 > self.max_requests_per_batch or batch_size + text_size > self.max_batch_size_mb:
                 df_chunk = df.iloc[start_idx:idx]
                 input_file_path = self.create_batch_file(df_chunk, data_path, system_prompt, len(batch_info), task_name, task_run_id, text_field, model, id_field)
                 batch_response = self.submit_batch_job(input_file_path, description)
@@ -108,15 +153,10 @@ class BatchProcessor:
             batch_size += text_size
             request_count += 1
 
-        # Check if there are any remaining requests that were not processed into a complete batch
         if request_count > 0:
-            # Create a DataFrame chunk for the remaining rows
             df_chunk = df.iloc[start_idx:]
-            # Create the batch file for the remaining data
             input_file_path = self.create_batch_file(df_chunk, data_path, system_prompt, len(batch_info), task_name, task_run_id, text_field, model, id_field)
-            # Submit the batch job to the OpenAI API
             batch_response = self.submit_batch_job(input_file_path, description)
-            # Append the batch response details to the batch_info list
             batch_info.append({
                 "batch_id": batch_response.id,
                 "input_file": input_file_path,
@@ -145,7 +185,7 @@ class BatchProcessor:
         batch_info_df.to_csv(os.path.join(output_dir, "batch_info.csv"), index=False)
         logging.info("Batch information saved.")
 
-    def run(self, system_prompt: Optional[Union[str, None]], system_prompt_file: Optional[str], input_file: str, data_path: str, text_field: str, task_name: str, model: str, id_field: str, description: str) -> None:
+    def run(self, system_prompt: Optional[Union[str, None]], system_prompt_file: Optional[str], input_file: str, data_path: str, text_field: str, task_name: str, model: str, id_field: Optional[str], description: str, random_samples: Optional[int], dry_run: bool, verbose: bool) -> None:
         logging.info("Starting the batch processing script.")
 
         task_run_id = self.get_next_task_run_id(task_name)
@@ -161,12 +201,38 @@ class BatchProcessor:
             logging.error("Unsupported file format. Use CSV or Parquet.")
             return
 
-        df = df.sample(100)
-        self.process_batches(df, system_prompt_content, data_path, task_name, task_run_id, text_field, model, id_field, description)
+        if random_samples:
+            df = df.sample(random_samples)
+        df['index_col'] = df.index
+
+        total_tokens, batch_info = self.estimate_batches(df, system_prompt_content, text_field, model)
+
+        print(f"Total tokens for the run: {total_tokens}")
+
+        if verbose:
+            table = [[info["batch_index"], info["start_idx"], info["end_idx"], info["num_requests"], info["batch_size_mb"], info["batch_tokens"]] for info in batch_info]
+            print(tabulate(table, headers=["Batch Index", "Start Index", "End Index", "Num Requests", "Batch Size (MB)", "Batch Tokens"]))
+
+        total_requests = sum(info["num_requests"] for info in batch_info)
+        total_batch_size = sum(info["batch_size_mb"] for info in batch_info)
+        total_batches = len(batch_info)
+        total_batch_tokens = sum(info["batch_tokens"] for info in batch_info)
+
+        summary_table = [
+            ["Total Requests", total_requests],
+            ["Total Batch Size (MB)", total_batch_size],
+            ["Total Batches", total_batches],
+            ["Total Batch Tokens", total_batch_tokens]
+        ]
+
+        print(tabulate(summary_table, headers=["Metric", "Value"]))
+
+        if not dry_run:
+            self.process_batches(df, system_prompt_content, data_path, task_name, task_run_id, text_field, model, id_field, description)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Batch job processing script")
-    parser.add_argument('--base_url', type=str, default=None, help='Base URL for OpenAI Compatabile Servers and proxies, example: https://localuser:localpassword@localhost:9090 or https://localhost:8080')
+    parser.add_argument('--base_url', type=str, default=None, help='Base URL for OpenAI Compatible Servers and proxies, example: https://localuser:localpassword@localhost:9090 or https://localhost:8080')
     parser.add_argument('--system_prompt', type=str, help='System prompt as a string')
     parser.add_argument('--system_prompt_file', type=str, help='Path to the system prompt file')
     parser.add_argument('--input_file', type=str, required=True, help='Path to the input CSV or Parquet file')
@@ -174,9 +240,12 @@ if __name__ == "__main__":
     parser.add_argument('--text_field', type=str, required=True, help='Name of the text field in the dataframe')
     parser.add_argument('--task_name', type=str, required=True, help='Task name to prefix batch files and output')
     parser.add_argument('--model', type=str, required=True, help='Model to use for OpenAI API')
-    parser.add_argument('--id_field', type=str, required=True, help='Name of the ID field in the dataframe')
-    parser.add_argument('--description', type=str, required=False, default="Playing with ODB!",  help='Description for the task run')
+    parser.add_argument('--id_field', type=str, required=False, help='Name of the ID field in the dataframe')
+    parser.add_argument('--description', type=str, required=False, default="Playing with ODB!", help='Description for the task run')
+    parser.add_argument('--random_samples', type=int, help='Number of rows to sample from the dataframe')
+    parser.add_argument('--dry_run', action='store_true', help='Perform a dry run without executing the batch jobs')
+    parser.add_argument('--verbose', action='store_true', help='Print detailed batch information')
 
     args = parser.parse_args()
-    processor = BatchProcessor(api_key=os.getenv("OPENAI_KEY"), base_url=args.base_url) # type: ignore
-    processor.run(args.system_prompt, args.system_prompt_file, args.input_file, args.data_path, args.text_field, args.task_name, args.model, args.id_field, args.description)
+    processor = BatchProcessor(api_key=os.getenv("OPENAI_KEY"), base_url=args.base_url, max_batch_size_mb=100, max_requests_per_batch=50000) # type: ignore
+    processor.run(args.system_prompt, args.system_prompt_file, args.input_file, args.data_path, args.text_field, args.task_name, args.model, args.id_field, args.description, args.random_samples, args.dry_run, args.verbose)
