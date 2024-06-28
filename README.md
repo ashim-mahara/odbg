@@ -1,8 +1,8 @@
-# Open Data Badger (ODB)
+# Open Data Badger (ODBG)
 
 ## Overview
 
-Open Data Badger (ODB) is a powerful data batching utility designed for OpenAI endpoints, with plans for future support for local language models (LLMs). ODB provides robust tools for managing, submitting, and processing large batches of data efficiently.
+Open Data Badger (ODBG) is a powerful data batching utility designed for OpenAI endpoints, with plans for future support for local language models (LLMs). ODB provides robust tools for managing, submitting, and processing large batches of data efficiently.
 
 ## Features
 
@@ -31,8 +31,8 @@ Open Data Badger (ODB) is a powerful data batching utility designed for OpenAI e
 1. Clone the repository:
 
    ```sh
-   git clone https://github.com/yourusername/odb.git
-   cd odb
+   git clone https://github.com/ashim-mahara/odbg.git
+   cd odbg
    ```
 
 2. Install the required dependencies using Poetry:

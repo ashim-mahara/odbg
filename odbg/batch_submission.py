@@ -354,7 +354,7 @@ class BatchProcessor:
             self.process_batches(df, system_prompt_content, data_path, task_name, task_run_id, text_field, model, id_field, description)
 
             logging.info(f"To check the status and download results, run the following command:")
-            logging.info(f"python -m odb.download_results.py --task_name {task_name} --task_run_id {task_run_id}")
+            logging.info(f"python -m odbg.download_results.py --task_name {task_name} --task_run_id {task_run_id}")
 
             return {"task_name": task_name, "task_run_id": task_run_id}
 
@@ -369,7 +369,7 @@ if __name__ == "__main__":
     parser.add_argument('--task_name', type=str, required=True, help='Task name to prefix batch files and output')
     parser.add_argument('--model', type=str, required=True, help='Model to use for OpenAI API')
     parser.add_argument('--id_field', type=str, required=False, help='Name of the ID field in the dataframe')
-    parser.add_argument('--description', type=str, required=False, default="Playing with ODB!", help='Description for the task run')
+    parser.add_argument('--description', type=str, required=False, default="Playing with ODBG!", help='Description for the task run')
     parser.add_argument('--random_samples', type=int, help='Number of rows to sample from the dataframe')
     parser.add_argument('--dry_run', action='store_true', help='Perform a dry run without executing the batch jobs')
     parser.add_argument('--verbose', action='store_true', help='Print detailed batch information')

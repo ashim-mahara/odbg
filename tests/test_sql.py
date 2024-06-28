@@ -1,6 +1,6 @@
 import unittest
 import sqlite3
-from odb import BatchProcessor, ResultDownloader
+from odbg import BatchProcessor, ResultDownloader
 
 class TestBatchProcessor(unittest.TestCase):
 
