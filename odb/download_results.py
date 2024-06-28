@@ -9,11 +9,19 @@ from typing import List, Dict
 
 class ResultDownloader:
     def __init__(self, api_key: str, db_name: str = 'jobs.db'):
+        """
+        Initializes the ResultDownloader with API key and database name.
+
+        Args:
+            api_key (str): API key for OpenAI.
+            db_name (str, optional): Name of the SQLite database. Defaults to 'jobs.db'.
+        """
         self.client = OpenAI(api_key=api_key)
         self.db_name = db_name
         self.init_db()
 
     def init_db(self) -> None:
+        """Initializes the SQLite database for storing job information."""
         conn = sqlite3.connect(self.db_name)
         c = conn.cursor()
         c.execute('''
@@ -31,6 +39,14 @@ class ResultDownloader:
         conn.close()
 
     def download_results(self, task_name: str, task_run_id: int, output_format: str) -> None:
+        """
+        Downloads results of completed batch jobs.
+
+        Args:
+            task_name (str): Name of the task.
+            task_run_id (int): Run ID of the task.
+            output_format (str): Output format for the results, either 'csv' or 'parquet'.
+        """
         logging.info(f"Checking the status of batch jobs for task: {task_name}, task_run_id: {task_run_id}")
 
         conn = sqlite3.connect(self.db_name)

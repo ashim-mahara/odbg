@@ -12,6 +12,16 @@ from tabulate import tabulate
 
 class BatchProcessor:
     def __init__(self, api_key: str, base_url: str, max_batch_size_mb: int = 100, max_requests_per_batch: int = 50000, db_name: str = 'jobs.db'):
+        """
+        Initializes the BatchProcessor with API key, base URL, batch size limits, and database name.
+
+        Args:
+            api_key (str): API key for OpenAI.
+            base_url (str): Base URL for OpenAI or compatible server.
+            max_batch_size_mb (int, optional): Maximum batch size in megabytes. Defaults to 100.
+            max_requests_per_batch (int, optional): Maximum number of requests per batch. Defaults to 50000.
+            db_name (str, optional): Name of the SQLite database. Defaults to 'jobs.db'.
+        """
         self.client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
         self.db_name = db_name
         self.max_batch_size_mb = max_batch_size_mb * 1024 * 1024  # Convert to bytes
@@ -19,6 +29,7 @@ class BatchProcessor:
         self.init_db()
 
     def init_db(self) -> None:
+        """Initializes the SQLite database for storing job information."""
         conn = sqlite3.connect(self.db_name)
         c = conn.cursor()
         c.execute('''
@@ -36,6 +47,16 @@ class BatchProcessor:
         conn.close()
 
     def read_system_prompt(self, system_prompt: Optional[Union[str, None]] = None, system_prompt_file: Optional[str] = None) -> Optional[str]:
+        """
+        Reads the system prompt either directly or from a file.
+
+        Args:
+            system_prompt (Optional[Union[str, None]], optional): System prompt as a string. Defaults to None.
+            system_prompt_file (Optional[str], optional): Path to the system prompt file. Defaults to None.
+
+        Returns:
+            Optional[str]: The system prompt content.
+        """
         if system_prompt:
             return system_prompt
         elif system_prompt_file:
@@ -44,6 +65,23 @@ class BatchProcessor:
         return None
 
     def create_batch_file(self, df_chunk: pd.DataFrame, data_path: str, system_prompt: Optional[str], batch_index: int, task_name: str, task_run_id: int, text_field: str, model: str, id_field: Optional[str]) -> str:
+        """
+        Creates a batch file in JSONL format for a chunk of data.
+
+        Args:
+            df_chunk (pd.DataFrame): DataFrame chunk to be processed.
+            data_path (str): Path to save the batch file.
+            system_prompt (Optional[str]): System prompt content.
+            batch_index (int): Index of the current batch.
+            task_name (str): Name of the task.
+            task_run_id (int): Run ID of the task.
+            text_field (str): Name of the text field in the DataFrame.
+            model (str): Model to use for OpenAI API.
+            id_field (Optional[str]): Name of the ID field in the DataFrame.
+
+        Returns:
+            str: Path to the created batch file.
+        """
         input_file_path = os.path.join(data_path, f"{task_name}/{task_run_id}/batch_{batch_index}.jsonl")
         os.makedirs(os.path.dirname(input_file_path), exist_ok=True)
         logging.info(f"Created directory for batch files: {os.path.dirname(input_file_path)}")
@@ -67,6 +105,16 @@ class BatchProcessor:
         return input_file_path
 
     def submit_batch_job(self, input_file_path: str, description: str) -> Dict:
+        """
+        Submits a batch job to OpenAI API.
+
+        Args:
+            input_file_path (str): Path to the input batch file.
+            description (str): Description of the batch job.
+
+        Returns:
+            Dict: Response from the batch job submission.
+        """
         file_response = self.client.files.create(file=open(input_file_path, "rb"), purpose="batch")
         file_id = file_response.id
         batch_response = self.client.batches.create(
@@ -78,6 +126,15 @@ class BatchProcessor:
         return batch_response
 
     def get_next_task_run_id(self, task_name: str) -> int:
+        """
+        Gets the next task run ID for a given task name.
+
+        Args:
+            task_name (str): Name of the task.
+
+        Returns:
+            int: Next task run ID.
+        """
         conn = sqlite3.connect(self.db_name)
         c = conn.cursor()
         c.execute('SELECT MAX(task_run_id) FROM jobs WHERE task_name = ?', (task_name,))
@@ -86,6 +143,18 @@ class BatchProcessor:
         return (max_run_id or 0) + 1
 
     def estimate_batches(self, df: pd.DataFrame, system_prompt: Optional[str], text_field: str, model: str) -> List[Dict]:
+        """
+        Estimates the number of batches needed for the given data.
+
+        Args:
+            df (pd.DataFrame): DataFrame to be processed.
+            system_prompt (Optional[str]): System prompt content.
+            text_field (str): Name of the text field in the DataFrame.
+            model (str): Model to use for OpenAI API.
+
+        Returns:
+            List[Dict]: List of batch information.
+        """
         enc = tiktoken.encoding_for_model(model)
         batch_size = 0
         request_count = 0
@@ -129,6 +198,20 @@ class BatchProcessor:
         return total_tokens, batch_info
 
     def process_batches(self, df: pd.DataFrame, system_prompt: Optional[str], data_path: str, task_name: str, task_run_id: int, text_field: str, model: str, id_field: Optional[str], description: str) -> None:
+        """
+        Processes and submits batches for the given data.
+
+        Args:
+            df (pd.DataFrame): DataFrame to be processed.
+            system_prompt (Optional[str]): System prompt content.
+            data_path (str): Path to save the batch files.
+            task_name (str): Name of the task.
+            task_run_id (int): Run ID of the task.
+            text_field (str): Name of the text field in the DataFrame.
+            model (str): Model to use for OpenAI API.
+            id_field (Optional[str]): Name of the ID field in the DataFrame.
+            description (str): Description of the task run.
+        """
         batch_info = []
         batch_size = 0
         request_count = 0
@@ -168,6 +251,17 @@ class BatchProcessor:
         logging.info("Done with submitting batches.")
 
     def save_job_details(self, task_name: str, task_run_id: int, status: str, job_id: str, file_path: str, description: str) -> None:
+        """
+        Saves job details to the database.
+
+        Args:
+            task_name (str): Name of the task.
+            task_run_id (int): Run ID of the task.
+            status (str): Status of the job.
+            job_id (str): ID of the job.
+            file_path (str): Path to the batch file.
+            description (str): Description of the task run.
+        """
         conn = sqlite3.connect(self.db_name)
         c = conn.cursor()
         c.execute('''
@@ -178,6 +272,15 @@ class BatchProcessor:
         conn.close()
 
     def save_batch_info(self, data_path: str, task_name: str, task_run_id: int, batch_info: List[Dict]) -> None:
+        """
+        Saves batch information to a CSV file.
+
+        Args:
+            data_path (str): Path to save the batch information.
+            task_name (str): Name of the task.
+            task_run_id (int): Run ID of the task.
+            batch_info (List[Dict]): List of batch information.
+        """
         batch_info_df = pd.DataFrame(batch_info)
         output_dir = os.path.join(data_path, f"{task_name}/{task_run_id}")
         os.makedirs(output_dir, exist_ok=True)
@@ -186,6 +289,26 @@ class BatchProcessor:
         logging.info("Batch information saved.")
 
     def run(self, system_prompt: Optional[Union[str, None]], system_prompt_file: Optional[str], input_file: str, data_path: str, text_field: str, task_name: str, model: str, id_field: Optional[str], description: str, random_samples: Optional[int], dry_run: bool, verbose: bool) -> Union[Dict, None]:
+        """
+        Main method to run the batch processing.
+
+        Args:
+            system_prompt (Optional[Union[str, None]]): System prompt as a string.
+            system_prompt_file (Optional[str]): Path to the system prompt file.
+            input_file (str): Path to the input CSV or Parquet file.
+            data_path (str): Path to save data.
+            text_field (str): Name of the text field in the DataFrame.
+            task_name (str): Task name to prefix batch files and output.
+            model (str): Model to use for OpenAI API.
+            id_field (Optional[str]): Name of the ID field in the DataFrame.
+            description (str): Description for the task run.
+            random_samples (Optional[int]): Number of rows to sample from the DataFrame.
+            dry_run (bool): Perform a dry run without executing the batch jobs.
+            verbose (bool): Print detailed batch information.
+
+        Returns:
+            Union[Dict, None]: Task information if not a dry run, otherwise None.
+        """
         logging.info("Starting the batch processing script.")
 
         task_run_id = self.get_next_task_run_id(task_name)
